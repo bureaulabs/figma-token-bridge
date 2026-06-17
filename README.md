@@ -32,6 +32,8 @@ fleeting chat prompt.
 /figma-token-bridge <verb> [options]
 ```
 
+New here? Run `/figma-token-bridge howto` for a guided tour of the model and verbs.
+
 | Verb | Purpose |
 |------|---------|
 | `howto` | Explain how the skill works — model, verbs, a typical session, first-run setup. Reads and writes nothing. |
