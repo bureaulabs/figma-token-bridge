@@ -37,6 +37,7 @@ last agreed?" — which is answerable per token.
 
 | Verb | What it does | Writes |
 |------|--------------|--------|
+| `howto` | Explain how the skill works — the model, the verbs, a typical session, and first-run setup. Pure guidance; reads nothing and writes nothing. | nothing |
 | `status` | Show, per token, whether it is unchanged / changed-in-code / changed-in-figma / conflicted / new. Read-only. | nothing |
 | `plan` | Compute the three-way merge and write `figma-token-bridge.plan.json`. Does not touch code or Figma. | plan file |
 | `apply` | Execute an existing plan, then update the lockfile to the new agreed state. | code or Figma, lockfile |
@@ -46,6 +47,31 @@ A normal session is `status` → `plan` → review the plan file → `apply`. Th
 in-turn "apply? yes/no" prompt: the plan file *is* the review surface, and `apply` is
 a deliberate separate invocation. This makes review inspectable, diffable, and
 attachable to a PR rather than ephemeral chat.
+
+### howto
+
+`/figma-token-bridge howto` is the built-in guide. It reads and writes nothing — it
+just explains the skill in chat so a user can orient without opening this file. Use it
+when the user is new, asks "how do I use this?", or types `howto` with no other verb.
+
+Respond with a concise walkthrough, not a dump of this document:
+
+1. **The model in one line** — a committed lockfile records the last agreed state, and
+   each run reconciles code and Figma against it via three-way merge, so one-sided
+   changes flow and two-sided changes surface as conflicts instead of being clobbered.
+2. **The verbs** — `status` (read-only diff), `plan` (write the reviewable plan file),
+   `apply` (execute a plan, advance the lock), `adopt` (set the lockfile base).
+3. **A typical session** — `status` → `plan` → open `figma-token-bridge.plan.json` and
+   edit it → `apply`.
+4. **First run** — there's no lockfile yet, so run `status`, reconcile once, then
+   `/figma-token-bridge adopt --init` to write the first base. Mention this whenever no
+   `figma-token-bridge.lock.json` exists.
+5. **What it needs** — the Figma MCP server connected, a token source in the repo, and
+   edit access to the Figma file for any write.
+
+Tailor the depth to the question: a bare `howto` gets the whole tour; "how do I
+resolve a conflict?" gets the `--resolve` / `--force` explanation and little else.
+`howto` never reads Figma or the codebase and never asks for a `--figma` URL.
 
 ### Options
 

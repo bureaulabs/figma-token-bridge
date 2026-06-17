@@ -34,6 +34,7 @@ fleeting chat prompt.
 
 | Verb | Purpose |
 |------|---------|
+| `howto` | Explain how the skill works — model, verbs, a typical session, first-run setup. Reads and writes nothing. |
 | `status` | Per-token: unchanged / changed-in-code / changed-in-figma / conflict / new. Read-only. |
 | `plan` | Compute the three-way merge, write the plan file. No writes to code or Figma. |
 | `apply` | Execute a plan, then advance the lockfile. |
