@@ -69,6 +69,43 @@ The skill **preflight-checks** these before doing any work: a verb that reads Fi
 stops and asks for `FIGMA_TOKEN` if it's missing, and `apply` stops and asks for the
 MCP server if it isn't connected — each only when that capability is actually needed.
 
+### Setting `FIGMA_TOKEN` (zsh)
+
+1. **Create the token** in Figma: avatar → **Settings** → **Security** → **Personal
+   access tokens** → generate one with **Variables: read** scope (add **write** too if
+   you'll write back). Copy it — it starts with `figd_` and is shown only once.
+
+2. **Persist it for every shell.** Add the export to `~/.zshenv`, which zsh sources on
+   *every* invocation — interactive terminals, non-interactive shells, and scripts/tools
+   alike. That last part matters: agents and CLIs often run in non-interactive shells
+   that never read `~/.zshrc`, so `~/.zshenv` is what makes the token reliably present
+   on every reload.
+
+   ```bash
+   echo 'export FIGMA_TOKEN="figd_your_token_here"' >> ~/.zshenv
+   ```
+
+3. **Load it now** (new shells pick it up automatically going forward):
+
+   ```bash
+   source ~/.zshenv
+   ```
+
+4. **Verify** it's set:
+
+   ```bash
+   [ -n "$FIGMA_TOKEN" ] && echo "FIGMA_TOKEN is set" || echo "not set — open a new terminal"
+   ```
+
+> Notes
+> - `~/.zshenv` covers shell-launched tools. **GUI apps** launched from the Dock (not a
+>   terminal) don't read it — restart the app from a terminal, or set a launchd/login
+>   environment, if your agent runs as a Dock app.
+> - Prefer `~/.zshenv` over `~/.zshrc` here: `~/.zshrc` only runs for *interactive*
+>   shells, so a token set there can be invisible to a tool running non-interactively.
+> - Treat the token as a secret: don't commit it, and prefer a real secret manager over
+>   a dotfile if your environment offers one.
+
 ## Install (project scope)
 
 Packaged as a plugin so the skill is available to any compatible agent. Install it

@@ -115,11 +115,16 @@ Two distinct capabilities, checked only when the verb needs them:
   `FIGMA_PERSONAL_ACCESS_TOKEN`). If none is set, stop and request it:
 
   > **Figma token required.** This skill reads the full variables table via the Figma
-  > REST API, which needs a personal access token with **variables read** scope. Set
-  > one and re-run:
+  > REST API, which needs a personal access token with **variables read** scope. Set it
+  > persistently so it survives shell reloads (zsh — use `~/.zshenv`, which every shell
+  > sources, not `~/.zshrc`, which only interactive ones do):
   > ```bash
-  > export FIGMA_TOKEN=figd_xxx   # add to your shell profile to persist
+  > echo 'export FIGMA_TOKEN="figd_your_token_here"' >> ~/.zshenv
+  > source ~/.zshenv   # load it into the current shell
   > ```
+  > For bash, use `~/.bashrc` (or `~/.profile` for login shells). See the README's
+  > "Setting `FIGMA_TOKEN`" section for token creation and verification.
+  >
   > Note: the Variables REST API is a Figma **Enterprise-plan** feature. If a token is
   > set but the read returns 401/403, say whether it's an auth failure (bad/expired
   > token or missing scope) or a plan limitation (not on Enterprise), and stop.
