@@ -67,8 +67,9 @@ Respond with a concise walkthrough, not a dump of this document:
 4. **First run** — there's no lockfile yet, so run `status`, reconcile once, then
    `/figma-token-bridge adopt --init` to write the first base. Mention this whenever no
    `figma-token-bridge.lock.json` exists.
-5. **What it needs** — the Figma MCP server connected, a token source in the repo, and
-   edit access to the Figma file for any write.
+5. **What it needs** — a Figma REST token (e.g. `FIGMA_TOKEN`) to read the full
+   variables table, the Figma MCP server connected for writes, a token source in the
+   repo, and edit access to the Figma file for any write.
 
 Tailor the depth to the question: a bare `howto` gets the whole tour; "how do I
 resolve a conflict?" gets the `--resolve` / `--force` explanation and little else.
@@ -131,8 +132,40 @@ the detected mode convention in the plan so `apply` writes back in the same shap
 
 ### Figma side
 
-Read variable collections, their modes, values, and alias targets via the Figma MCP
-read tools. **Load `figma-use` only before a write**, never for reads.
+The Figma snapshot must cover **every local variable**, including ones not applied to
+any frame or layer. That requires a full read of the variables table, which is the
+**canonical read path**:
+
+1. **REST Variables API (canonical).** `GET /v1/files/:fileKey/variables/local` with a
+   Figma personal/CI token. This enumerates all local variable collections, their
+   modes, per-mode values, and alias (`VARIABLE_ALIAS`) targets, **independent of
+   whether any node uses them** — so a newly added or unused variable is included. This
+   is the read the snapshot is built from. It needs a token in the environment
+   (e.g. `FIGMA_TOKEN`) and is a Figma enterprise-plan endpoint; if the token is
+   missing, say so and stop rather than silently falling back.
+
+2. **MCP `get_variable_defs` (selection-only fallback).** This resolves only the
+   variables **bound to a given node / the current selection**, and returns them as a
+   flattened name→value map — it does **not** enumerate the table, and unused variables
+   never appear. Use it only for a quick, explicitly scoped spot-check of a selection,
+   never as the source for a full `status`/`plan`/`apply`. State plainly when a read
+   came from this path that coverage is limited to the selection.
+
+**Load `figma-use` only before a write**, never for reads.
+
+#### Never read a partial table as deletion
+
+A token present in the lockfile but absent from the Figma read is only a real
+deletion if the read was **complete**. Because a scoped or failed read can omit
+variables that still exist, guard against false `flag`s:
+
+- Only classify absent-in-figma tokens as `deleted in figma` when the snapshot came
+  from the canonical REST read **and** that read succeeded and returned a non-empty
+  table. Otherwise treat absences as *unknown*, not deleted.
+- If the REST read fails, returns empty, or only a selection-scoped fallback was
+  available, **abort the run** (or, for `status`, report "Figma read incomplete —
+  coverage limited") rather than emitting deletions. A bad read must never advance the
+  lockfile or produce delete/`flag` ops.
 
 ## Three-way merge (the core algorithm)
 

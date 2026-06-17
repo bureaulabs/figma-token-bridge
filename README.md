@@ -57,7 +57,11 @@ your git history is a precise audit trail of every sync.
 
 ## Requirements
 
-- The **Figma MCP server** connected in your agent (Claude Code, Cursor, etc.).
+- A **Figma REST token** (e.g. `FIGMA_TOKEN`) to read the full variables table —
+  including variables not applied to any frame. This is the canonical read path; the
+  Variables REST endpoint is a Figma enterprise-plan feature.
+- The **Figma MCP server** connected in your agent (Claude Code, Cursor, etc.) for
+  writes back to Figma.
 - A token source in your repo.
 - Edit access to the Figma file for any run that writes to Figma.
 
