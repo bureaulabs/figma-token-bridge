@@ -65,6 +65,10 @@ your git history is a precise audit trail of every sync.
 - A token source in your repo.
 - Edit access to the Figma file for any run that writes to Figma.
 
+The skill **preflight-checks** these before doing any work: a verb that reads Figma
+stops and asks for `FIGMA_TOKEN` if it's missing, and `apply` stops and asks for the
+MCP server if it isn't connected — each only when that capability is actually needed.
+
 ## Install (project scope)
 
 Packaged as a plugin so the skill is available to any compatible agent. Install it

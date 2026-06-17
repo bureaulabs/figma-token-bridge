@@ -101,6 +101,43 @@ resolve a conflict?" gets the `--resolve` / `--force` explanation and little els
   would override. Scope it with `--only` to limit the blast radius. See "Forced apply".
 - `--init` — for `adopt`, allowed only when no lockfile exists yet.
 
+## Preflight
+
+Before any verb that touches Figma, check that the capability that verb needs is
+actually available, and **stop with a specific, actionable message** if it isn't.
+Never proceed into a read or write that will silently come up empty or fail
+mid-operation. `howto` needs nothing and skips preflight entirely.
+
+Two distinct capabilities, checked only when the verb needs them:
+
+- **Read (any verb that reads Figma — `status`, `plan`, `apply`)** needs a Figma REST
+  token. Check for it in the environment (`FIGMA_TOKEN`, or `FIGMA_ACCESS_TOKEN` /
+  `FIGMA_PERSONAL_ACCESS_TOKEN`). If none is set, stop and request it:
+
+  > **Figma token required.** This skill reads the full variables table via the Figma
+  > REST API, which needs a personal access token with **variables read** scope. Set
+  > one and re-run:
+  > ```bash
+  > export FIGMA_TOKEN=figd_xxx   # add to your shell profile to persist
+  > ```
+  > Note: the Variables REST API is a Figma **Enterprise-plan** feature. If a token is
+  > set but the read returns 401/403, say whether it's an auth failure (bad/expired
+  > token or missing scope) or a plan limitation (not on Enterprise), and stop.
+
+- **Write (`apply` writing to Figma)** needs the **Figma MCP server** connected. If it
+  isn't, stop before reading anything and request it:
+
+  > **Figma MCP server not configured.** Writing to Figma needs the Figma MCP server
+  > connected in your agent. Connect it (and confirm `figma-use` is available), then
+  > re-run. A read-only `status`/`plan` does not need the MCP server — only the REST
+  > token above.
+
+Run the check that matches the verb, validate before doing real work (a token that is
+present but rejected, or an MCP server that is configured but unreachable, must be
+reported as such — presence is not the same as working), and distinguish the two
+failures plainly so the user knows whether to fix a token, a plan, or an MCP
+connection. Surface the request once; do not loop.
+
 ## Reading and normalization
 
 Read each side into a snapshot of canonical token rows:
@@ -265,7 +302,10 @@ guess a direction.
 - A `--force` apply additionally snapshots the side being overwritten before writing,
   so an override is recoverable from disk in addition to VCS.
 - Deletions and conflicts are never resolved without an explicit instruction.
-- If the Figma MCP server is not connected, stop and ask the user to connect it.
+- Capability gating is handled up front by **Preflight**: a read needs a `FIGMA_TOKEN`,
+  a Figma write needs the MCP server connected. Each is requested only when the verb
+  needs it (a read-only `status`/`plan` never requires the MCP server), and a missing
+  capability stops the run with a specific message rather than failing mid-operation.
 
 ## Initialization
 
