@@ -56,17 +56,38 @@ your git history is a precise audit trail of every sync.
 - A token source in your repo.
 - Edit access to the Figma file for any run that writes to Figma.
 
-## Install (available to any agent)
+## Install (project scope)
 
-Packaged as a plugin so the skill is available to any compatible agent.
+Packaged as a plugin so the skill is available to any compatible agent. Install it
+into the **project**, not globally:
 
 ```bash
-npx skills add bureaulabs/figma-token-bridge@figma-token-bridge -g -y
+npx skills add bureaulabs/figma-token-bridge@figma-token-bridge -y
 ```
 
 Or copy `skills/figma-token-bridge/` into your tool's skills directory. The
 `.claude-plugin/`, `.cursor-plugin/`, and `.mcp.json` manifests let it load as a
 plugin in each client.
+
+### Why not a global install?
+
+This skill declares a Figma MCP-server dependency (`metadata: mcp-server: figma` in
+`SKILL.md`), and the MCP server is configured per project via `.mcp.json`. Installers
+therefore scope the skill to the project and **reject a global install** — passing a
+global flag (`-g` / `--global`) fails with:
+
+```
+figma-token-bridge → PromptScript: PromptScript does not support global skill installation
+```
+
+That's the installer refusing to place an MCP-dependent skill where its server isn't
+available — not a problem with the skill itself. Project scope is the right home for a
+tool that reconciles a specific repo against a specific Figma file.
+
+If you truly need it on every project without re-installing, configure the Figma MCP
+server globally in your agent's user settings and remove the `metadata.mcp-server`
+line from `SKILL.md` so the skill no longer pins itself to project scope. Not
+recommended — the dependency is real.
 
 ## Suggested .gitignore
 
