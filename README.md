@@ -18,7 +18,8 @@ Three artifacts:
 
 - **Snapshot** — normalized state of one side, read fresh each run.
 - **Lockfile** (`figma-token-bridge.lock.json`, committed) — the last agreed state; the
-  merge base that makes conflict detection possible.
+  merge base that makes conflict detection possible. Also stores the bound Figma file,
+  so it's remembered across sessions.
 - **Plan** (`figma-token-bridge.plan.json`, generated) — an ordered, readable list of
   operations you inspect before anything is written.
 
@@ -42,7 +43,8 @@ New here? Run `/figma-token-bridge howto` for a guided tour of the model and ver
 | `apply` | Execute a plan, then advance the lockfile. |
 | `adopt` | Record current state as the lockfile base (use `--init` on first run). |
 
-Options: `--figma <url>`, `--only <glob>` (repeatable), `--resolve code|figma`
+Options: `--figma <url>` (stored in the lockfile after the first run; only needed
+again to override the bound file), `--only <glob>` (repeatable), `--resolve code|figma`
 (for conflicts at apply time), `--force code|figma` (deliberate whole-side override
 at apply time — overwrites the other side's changes too), `--init` (first-run adopt).
 

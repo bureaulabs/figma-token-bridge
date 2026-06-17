@@ -23,7 +23,8 @@ Invoke with: `/figma-token-bridge <verb> [options]`
   moment in time. Produced by reading and normalizing; never written back.
 - **Lockfile** — `figma-token-bridge.lock.json`, committed to the repo. The last state both
   sides agreed on. This is the merge base. Its presence is what makes conflict
-  detection possible.
+  detection possible. It also records the project's bound Figma file (`figmaFile`), so
+  the file is remembered across sessions and `--figma` is needed only to override it.
 - **Plan** — `figma-token-bridge.plan.json`, a generated, ordered, human-readable list of
   operations (`create`, `set`, `relink`, `flag`). A plan is inspected and then
   executed as a separate step. Plans are deterministic: the same inputs produce the
@@ -41,7 +42,7 @@ last agreed?" — which is answerable per token.
 | `status` | Show, per token, whether it is unchanged / changed-in-code / changed-in-figma / conflicted / new. Read-only. | nothing |
 | `plan` | Compute the three-way merge and write `figma-token-bridge.plan.json`. Does not touch code or Figma. | plan file |
 | `apply` | Execute an existing plan, then update the lockfile to the new agreed state. | code or Figma, lockfile |
-| `adopt` | Write the current reconciled state to the lockfile without changing either side. Used to initialize the lock, or to accept the current reality as the new base. | lockfile |
+| `adopt` | Write the current reconciled state to the lockfile without changing either side, recording the bound `figmaFile`. Used to initialize the lock, or to accept the current reality as the new base. | lockfile |
 
 A normal session is `status` → `plan` → review the plan file → `apply`. There is no
 in-turn "apply? yes/no" prompt: the plan file *is* the review surface, and `apply` is
@@ -75,8 +76,16 @@ resolve a conflict?" gets the `--resolve` / `--force` explanation and little els
 
 ### Options
 
-- `--figma <url>` — Figma Design file or selection URL. Required for any verb that
-  reads Figma; if absent, ask once and remember it for the session.
+- `--figma <url>` — Figma Design file or selection URL. The bound file is stored in the
+  lockfile's `figmaFile` once set, so it is remembered across sessions and is **not**
+  required on every run. Resolution order for any verb that reads Figma:
+  1. `--figma <url>` if passed — wins, and is treated as a deliberate override.
+  2. else the lockfile's `figmaFile`, if a lockfile exists.
+  3. else (no lockfile yet, or lockfile has no `figmaFile`) ask once and remember it
+     for the session; the first `adopt`/`apply` writes it into the lockfile.
+  When `--figma` overrides a different stored `figmaFile`, say so before reading — a
+  changed file binding usually means a re-`adopt`, not a normal sync. Passing `--figma`
+  that matches the stored value is a harmless no-op.
 - `--only <glob>` — restrict to matching token keys (e.g. `--only "color.*"`).
   Repeatable. Applies to every verb.
 - `--resolve code|figma` — for `apply`, how to settle conflicts that the plan marked
@@ -186,7 +195,9 @@ The plan is meant to be opened and read. A reviewer can delete ops they don't wa
    convention. Rely on the user's VCS as the safety net; if the working tree is not
    under version control, say so before writing.
 5. On success, rewrite `figma-token-bridge.lock.json` to the new agreed state and report the
-   new lock hash. The lock now reflects reality; the next `status` is clean.
+   new lock hash. Persist `figmaFile` (the resolved file used for this run) into the
+   lockfile so the binding sticks. The lock now reflects reality; the next `status` is
+   clean and needs no `--figma`.
 
 ### Forced apply (`--force`)
 
@@ -226,6 +237,8 @@ guess a direction.
 ## Initialization
 
 First run, with no lockfile: there is no merge base, so every differing token would
-look like a conflict. Instead, run `status` to show the divergence, help the user
-reconcile once (or pick a side for the initial state), then `/figma-token-bridge adopt --init`
-to write the first lockfile. Subsequent runs use real three-way merge.
+look like a conflict. The first run also has no stored `figmaFile`, so pass `--figma`
+once on this run. Run `status` to show the divergence, help the user reconcile once
+(or pick a side for the initial state), then `/figma-token-bridge adopt --init` to write
+the first lockfile — which records the `figmaFile` binding. Subsequent runs use real
+three-way merge and reuse the stored file, so `--figma` is only needed to override.
