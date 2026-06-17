@@ -1,0 +1,7 @@
+{
+  "name": "figma-token-bridge",
+  "version": "1.0.0",
+  "description": "Reconcile design tokens between code and Figma variables with a committed lockfile and reviewable plans.",
+  "author": { "name": "bureaulabs" },
+  "skills": "./skills/"
+}
