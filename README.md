@@ -19,8 +19,8 @@ Three artifacts:
 - **Snapshot** — normalized state of one side, read fresh each run.
 - **Lockfile** (`figma-token-bridge.lock.json`, committed) — the last agreed state; the
   merge base that makes conflict detection possible. Also stores the bound Figma file
-  and the **read strategy** (and, for the page strategy, the managed token-page id), so
-  both are remembered across sessions.
+  and the **read strategy** (and, for the page strategy, the plugin-maintained
+  token-page id), so both are remembered across sessions.
 - **Plan** (`figma-token-bridge.plan.json`, generated) — an ordered, readable list of
   operations you inspect before anything is written.
 
@@ -52,7 +52,8 @@ again to override the bound file), `--only <glob>` (repeatable), `--resolve code
 (for conflicts at apply time), `--force code|figma` (deliberate whole-side override
 at apply time — overwrites the other side's changes too), `--init` (first-run adopt),
 and for `reset`: `--purge` (also delete local snapshots), `--with-page` (also delete the
-managed Figma token page), `--yes` (skip the confirmation prompt).
+plugin-maintained Figma token page — which the plugin will recreate), `--yes` (skip the
+confirmation prompt).
 
 ## First-run setup
 
@@ -63,15 +64,18 @@ once:
 
 - **`rest`** (Enterprise) — reads the full variables table via the Figma Variables REST
   API, the highest-fidelity read. Needs a `FIGMA_TOKEN` with variables-read scope.
-- **`page`** (the default for everyone else) — the skill generates and maintains a
-  dedicated Figma page of variable-bound artefacts (each token applied to a node, a
-  section per mode) and reads tokens from it through the MCP server. **No token
-  required** — just the Figma MCP server connected. The page is how non-Enterprise
-  projects get a complete, mode-aware read without the REST API.
+- **`page`** (the default for everyone else) — reads tokens from a **Figma page of
+  variable-bound artefacts maintained by the companion Token Sync plugin** (each token
+  applied to a node, one section per collection × mode), through the MCP server. **No
+  token required** — just the Figma MCP server connected and the plugin to keep the page
+  current. The page is how non-Enterprise projects get a complete, mode-aware read
+  without the REST API; on `setup` the skill discovers it by name and remembers its node
+  id. The page shape is defined by the **Token Page Contract (v1)**, maintained in the
+  Token Sync plugin repo, which the skill and plugin both honor.
 
 Detection is by probe, not guesswork: setup tries the REST read and falls back to `page`
 on a 403 (not Enterprise / missing scope) or when no token is set. Re-run
-`/figma-token-bridge setup` anytime to switch strategy or regenerate the token page (e.g.
+`/figma-token-bridge setup` anytime to switch strategy or re-discover the token page (e.g.
 after upgrading to Enterprise).
 
 ## Why a lockfile
@@ -86,8 +90,9 @@ your git history is a precise audit trail of every sync.
 What you need depends on the read strategy setup selects:
 
 - **`page` strategy (default, any plan)** — the **Figma MCP server** connected in your
-  agent (Claude Code, Cursor, etc.). It's used for both reading the managed token page
-  and writing. **No `FIGMA_TOKEN` needed.**
+  agent (Claude Code, Cursor, etc.), plus the **Token Sync plugin** installed in Figma to
+  build and maintain the token page. The MCP server is used for reading that page and for
+  writing. **No `FIGMA_TOKEN` needed.**
 - **`rest` strategy (Enterprise)** — a **Figma REST token** (e.g. `FIGMA_TOKEN`) with
   variables-read scope, to read the full variables table via the Enterprise-only
   Variables REST API. Writes still go through the MCP server.

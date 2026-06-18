@@ -27,10 +27,10 @@ Invoke with: `/figma-token-bridge <verb> [options]`
   the file is remembered across sessions and `--figma` is needed only to override it,
   and **how this project reads Figma** in a `figmaRead` object. There are two read
   **strategies**, chosen once by `setup` (see [Setup](#setup)) and remembered here:
-  `rest` (the Figma Variables REST API — Enterprise only) and `page` (a skill-managed
-  page of variable-bound artefacts, read via the MCP server — works on any plan). Every
-  section that touches Figma branches on `figmaRead.strategy`; the full schema is in
-  [Lockfile format](#lockfile-format).
+  `rest` (the Figma Variables REST API — Enterprise only) and `page` (a
+  **plugin-maintained** page of variable-bound artefacts, read via the MCP server —
+  works on any plan). Every section that touches Figma branches on `figmaRead.strategy`;
+  the full schema is in [Lockfile format](#lockfile-format).
 - **Plan** — `figma-token-bridge.plan.json`, a generated, ordered, human-readable list of
   operations (`create`, `set`, `relink`, `flag`). A plan is inspected and then
   executed as a separate step. Plans are deterministic: the same inputs produce the
@@ -45,7 +45,7 @@ last agreed?" — which is answerable per token.
 | Verb | What it does | Writes |
 |------|--------------|--------|
 | `howto` | Explain how the skill works — the model, the verbs, a typical session, and first-run setup. Pure guidance; reads nothing and writes nothing. | nothing |
-| `setup` | Interactively configure how this project reads Figma (`rest` vs `page`), bind the Figma file, generate the managed token page if needed, and write the initial lockfile. Runs automatically on first run; re-runnable anytime to switch strategy or regenerate the page. | lockfile (+ a Figma page in `page` strategy) |
+| `setup` | Interactively configure how this project reads Figma (`rest` vs `page`), bind the Figma file, discover/adopt the plugin-maintained token page (`page` strategy), and write the initial lockfile. Runs automatically on first run; re-runnable anytime to switch strategy or re-discover the page. | lockfile |
 | `status` | Show, per token, whether it is unchanged / changed-in-code / changed-in-figma / conflicted / new. Read-only. | nothing |
 | `plan` | Compute the three-way merge and write `figma-token-bridge.plan.json`. Does not touch code or Figma. | plan file |
 | `apply` | Execute an existing plan, then update the lockfile to the new agreed state. | code or Figma, lockfile |
@@ -77,13 +77,14 @@ Respond with a concise walkthrough, not a dump of this document:
    edit it → `apply`.
 4. **First run** — there's no lockfile yet, so the first verb auto-launches `setup`. It
    detects whether your plan supports the Variables REST API and picks a read strategy:
-   `rest` (Enterprise) or `page` (the default for everyone else — a skill-managed token
-   page). Setup writes the first lockfile. Mention this whenever no
-   `figma-token-bridge.lock.json` exists.
+   `rest` (Enterprise) or `page` (the default for everyone else — read from a
+   plugin-maintained token page). Setup writes the first lockfile. Mention this whenever
+   no `figma-token-bridge.lock.json` exists.
 5. **What it needs** — depends on the strategy. `rest` needs a Figma REST token
-   (e.g. `FIGMA_TOKEN`) with variables-read scope (Enterprise). `page` needs only the
-   Figma MCP server connected — **no token**. Either way, *writing* to Figma needs the
-   MCP server, plus a token source in the repo and edit access to the Figma file.
+   (e.g. `FIGMA_TOKEN`) with variables-read scope (Enterprise). `page` needs the Figma
+   MCP server connected and the **Token Sync plugin** to maintain the token page — **no
+   token**. Either way, *writing* to Figma needs the MCP server, plus a token source in
+   the repo and edit access to the Figma file.
 
 Tailor the depth to the question: a bare `howto` gets the whole tour; "how do I
 resolve a conflict?" gets the `--resolve` / `--force` explanation and little else.
@@ -115,13 +116,14 @@ resolve a conflict?" gets the `--resolve` / `--force` explanation and little els
   would override. Scope it with `--only` to limit the blast radius. See "Forced apply".
 - `--init` — for `adopt`, allowed only when no lockfile exists yet. `setup` performs the
   same baseline write interactively; `adopt --init` is the explicit, non-interactive
-  primitive. Re-run `setup` with no flags anytime to switch strategy or regenerate the
-  managed token page.
+  primitive. Re-run `setup` with no flags anytime to switch strategy or re-discover the
+  plugin-maintained token page.
 - `--purge` — for `reset`, also delete the `.figma-token-bridge/` snapshot directory
   (pre-write backups). Off by default so reset keeps the backups as a safety net.
-- `--with-page` — for `reset` in `page` strategy, also delete the managed token page in
-  Figma. Destructive and needs the MCP server; the page is snapshotted first and the
-  deletion is confirmed separately.
+- `--with-page` — for `reset` in `page` strategy, also delete the **plugin-maintained**
+  token page in Figma. Destructive and needs the MCP server; the page is snapshotted
+  first and the deletion is confirmed separately. Note the page is shared with the Token
+  Sync plugin, which will recreate it on its next run.
 - `--yes` — for `reset`, skip the confirmation prompt (for scripting). Never assumed.
 
 ## Preflight
@@ -183,12 +185,23 @@ run setup. Surface the request once; do not loop.
 
 Read each side into a snapshot of canonical token rows:
 
-- `key` — dot-path canonical name (`color.bg.primary`). Figma `group/name` segments
-  map to dots; confirm any non-trivial transform with the user before relying on it.
+- `key` — dot-path canonical name (`color.bg.primary`), the join key between code, the
+  lockfile, and the page. The Figma variable name maps to the key by swapping the group
+  separator `/` for `.` (`color/bg/primary` ↔ `color.bg.primary`) and nothing else: the
+  rest is verbatim, case preserved, and a key segment must not itself contain `.` or `/`.
+  Confirm any richer transform with the user before relying on it.
 - `type` — `color` | `number` | `string` | `boolean`
 - `modes` — map of mode name → value (a token is a value *per mode*, not one value)
 - `ref` — if the token aliases another token, its canonical target key (else null)
 - `hash` — stable content hash of `{type, modes, ref}` after normalization
+
+**Value normalization** (both sides apply it before hashing so cosmetic differences
+don't read as drift):
+
+- **color** → `#RRGGBB`, or `#RRGGBBAA` when alpha < 1, uppercase hex.
+- **number** → JS number with trailing zeros trimmed (`4.0` → `4`).
+- **string** → verbatim.
+- **boolean** → `true` / `false`.
 
 The `hash` is what detection compares, so renames and reformatting that don't change
 meaning don't register as drift, and a value change registers even if the formatting
@@ -212,9 +225,11 @@ Modes come from whichever convention the source uses — nested `{ light, dark }
 key suffixes (`.dark`), or sibling theme files (`light.json` / `dark.json`). Record
 the detected mode convention in the plan so `apply` writes back in the same shape.
 
-These detected code tokens (and their modes) are also the source `setup` uses to
-**generate the managed token page** in `page` strategy — one artefact per token, a
-section per mode (see [Figma side](#figma-side)).
+In `page` strategy these detected code tokens are also what the skill **fills in** on the
+plugin-maintained page — for a token present in code but absent from the page, `apply`
+creates the Figma variable and adds its artefact (see [Figma side](#figma-side) and
+[apply](#apply)). The skill does not generate the page itself; the Token Sync plugin owns
+it.
 
 ### Figma side
 
@@ -234,38 +249,66 @@ Enterprise (or the token lacks scope) and suggest `setup` to switch to `page`.
 
 #### Strategy `page` (any plan, the default)
 
-For non-Enterprise projects the snapshot is read from a **skill-managed page of
-variable-bound artefacts** — the page whose node id is `figmaRead.tokensPageNodeId`.
-Each token is *applied* to a node, and because `get_variable_defs` resolves the
-variables bound to a node, applying every token to an artefact makes the whole set
-readable through the MCP server without the REST API.
+For non-Enterprise projects the snapshot is read from a **plugin-maintained page of
+variable-bound artefacts**, governed by the **Token Page Contract (v1)** — the shared
+spec the **Token Sync plugin** (the page's primary owner) and this skill both honor.
+The contract is the source of truth; the operative rules are mirrored here, but defer to
+it on any discrepancy. The plugin owns the page; the skill *reads* it and *fills in*
+code-only tokens (see [apply](#apply)).
 
-- **Artefact mapping** — `color` → a swatch (rectangle) with the variable bound to its
-  fill; `number` → a frame whose bound dimension (width/height/spacing) uses the
-  variable; `string`/type → a text node with the variable bound to its content or text
-  style; `boolean` → a labeled toggle artefact (a node named for the token whose
-  visible on/off state is driven by the variable). Each artefact's layer name is the
-  token's canonical `key`.
-- **Multi-mode** — every mode is represented as its own section (a frame per mode, named
-  for the mode) so all per-mode values are present on one page at once; the mode names
-  are recorded in `figmaRead.modes`.
-- **How to read** — `get_metadata` on `tokensPageNodeId` to enumerate the per-mode
-  sections and their artefact nodes, then `get_variable_defs` scoped to those nodes to
-  resolve each bound variable's name→value per mode. Normalize into the same canonical
-  rows (`key`, `type`, `modes`, `ref`, `hash`).
-- **Honest caveats** — coverage is exactly "what's on the managed page": a variable with
-  no artefact is invisible to this read (this is why the deletion guard below treats such
-  absences as *unknown*, never deletions). Alias/`ref` fidelity is limited — node reads
-  resolve values rather than exposing `VARIABLE_ALIAS` targets, so `ref` may be captured
-  as a resolved value; flag relinks conservatively rather than guessing. Completeness is
-  defined relative to the page the skill itself generates and maintains.
+**Rule 0 — every artefact carries a live binding to the real `Variable`.**
+`get_variable_defs` is node-scoped: it returns only variables *actually bound to a node's
+properties*. A swatch painted a static color, or text that merely spells out a hex value,
+exposes no variable and is invisible. The artefact is the token *applied* to a node, not
+a picture of it. Decorative labels/captions are allowed but never read.
+
+- **Page identity & discovery** — exactly one managed page per file, named
+  `🎨 Design Tokens` (discovery relies on the name, because MCP tools see node
+  names/structure, not plugin-private data). The plugin also stamps a shared marker
+  (`figma_token_bridge` namespace, `managedPage=1`). `setup` resolves the page once and
+  records its node id as `figmaRead.tokensPageNodeId`; later runs target that id and
+  re-discover by name if it goes stale.
+- **Mode sections** — Figma modes are per-collection, so the page is organized by
+  **(collection × mode)**: one section frame per pair, named exactly
+  `"<Collection> / <Mode>"` (e.g. `Brand / Dark`), with the explicit mode set for that
+  collection so every artefact inside *resolves* at that mode. A section holds only
+  artefacts for its collection's variables. `figmaRead.modes` records the union of mode
+  names seen (informational); the section names carry the authoritative collection+mode
+  pairing.
+- **Artefact → binding (one per variable per section, layer-named the canonical key):**
+
+  | Variable type | Artefact | Bound property |
+  |---|---|---|
+  | `COLOR` | Rectangle (swatch) | fill paint color |
+  | `FLOAT` | Frame | `width` |
+  | `STRING` | Text node | `characters` |
+  | `BOOLEAN` | Frame container + child | child's `visible` (binding is reported even when hidden; the named container stays enumerable) |
+
+  Identity is **(canonical key, section)** — upserts match by layer name *within a
+  section*; never a second artefact for the same key in the same section.
+- **How to read** — (1) resolve the page (`tokensPageNodeId`, else by name); (2)
+  `get_metadata` on the page to enumerate section frames (parse `"<Collection> / <Mode>"`)
+  and their artefact children (names = canonical keys); (3) for each section,
+  `get_variable_defs` scoped to its nodes resolves each bound variable's `name → value`
+  *at that section's mode*; (4) normalize into canonical rows `{key, type, modes, ref,
+  hash}` — key from the layer name, mode from the section, value per
+  [§ normalization](#reading-and-normalization). This feeds the three-way merge unchanged.
+- **Coverage & caveats** — coverage is exactly "what's on the page": a variable with no
+  artefact is *unknown*, never a deletion (the deletion guard below). Alias/`ref` fidelity
+  is best-effort — `get_variable_defs` resolves the *value*, not the `VARIABLE_ALIAS`
+  target, so resolved values are authoritative and relinks are flagged conservatively.
+- **Scope: variables only** — the contract (and this skill) cover `COLOR` / `FLOAT` /
+  `STRING` / `BOOLEAN` variables. Figma **styles** (paint/text/effect/grid) are out of
+  scope and live in a separate region outside the `"<Collection> / <Mode>"` sections;
+  never enumerate a style tile as a token artefact.
 
 A bare `get_variable_defs` on an arbitrary selection remains available as an ad-hoc
 spot-check, but it is not a strategy — it only sees the current selection.
 
-**Load `figma-use` only before a write**, never for ordinary reads — with one
-exception: `page` strategy's `setup`/`apply` use `figma-use` to *create and maintain*
-the managed page, which is itself a write.
+**Load `figma-use` only before a write**, never for ordinary reads — with one exception:
+the skill's `page`-strategy **fill-in** write (see [apply](#apply)) uses `figma-use` to
+create a code-only variable and add its artefact. The plugin remains the page's primary
+owner; the skill only contributes the missing pieces.
 
 #### Never read a partial table as deletion
 
@@ -278,7 +321,8 @@ strategy:
   snapshot came from a REST read that **succeeded and returned a non-empty table**.
 - **`page`** — a token absent from the read is **not** a deletion just because it lacks
   an artefact; absences are *unknown*. A genuine page-mode deletion is only an artefact
-  the skill previously maintained that is now gone from the page. When in doubt, treat
+  that was present in the lockfile base and is now gone from the page (the Token Sync
+  plugin deletes an artefact when its variable is removed in Figma). When in doubt, treat
   page-coverage gaps as unknown and never auto-delete.
 - In either strategy, if the read fails, returns empty, or coverage is uncertain,
   **abort the run** (or, for `status`, report "Figma read incomplete — coverage
@@ -308,9 +352,9 @@ figma→code operations at once — each token flows from wherever it changed. C
 and deletions never resolve automatically.
 
 The table is strategy-agnostic, with one caveat: in `page` strategy the `deleted in
-figma` row fires only when an artefact the skill maintained was genuinely removed from
-the managed page, never when a variable merely lacks an artefact (see the deletion
-guard above).
+figma` row fires only when an artefact that was in the base is genuinely gone from the
+managed page, never when a variable merely lacks an artefact (see the deletion guard
+above).
 
 ## Plan file format
 
@@ -367,7 +411,10 @@ Figma binding and read strategy:
 
 - `figmaRead.strategy` — `"rest"` or `"page"`. For `"rest"`, `tokensPageNodeId` and
   `modes` are omitted (the REST read needs neither). For `"page"`, both are present:
-  `tokensPageNodeId` is the managed page, `modes` the mode sections represented on it.
+  `tokensPageNodeId` is the plugin-maintained page (discovered by name on `setup`),
+  and `modes` is the informational union of mode names seen across its
+  `"<Collection> / <Mode>"` sections (the section names carry the authoritative
+  collection+mode pairing).
 - `tokens` — the agreed base, one canonical row per token (the same shape produced by
   reading; see [Reading and normalization](#reading-and-normalization)). This is the
   merge base the three-way compare uses.
@@ -381,13 +428,16 @@ Figma binding and read strategy:
 3. For Figma writes: load `figma-use`, then apply ops sequentially in this order —
    ensure collections/modes, `create` primitives, `create`/`relink` aliases, `set`
    values. Never parallelize writes. Never delete unless an op explicitly says so
-   *and* the user passed an explicit delete resolution. In `page` strategy this same
-   step must **also maintain the managed token page** so future reads stay complete: a
-   newly created token gets a new artefact in every mode section; a changed value
-   updates the artefact (and adds a mode section if a new mode appeared). The variables
-   are still the source of truth — the page is their readable surface — so a designer's
-   edit to a bound variable is captured automatically on the next read, no special
-   handling needed.
+   *and* the user passed an explicit delete resolution. In `page` strategy the write is a
+   **fill-in contribution** to the plugin-maintained page, per the Token Page Contract:
+   for a token present in code but absent from the page, create the underlying Figma
+   variable in the right collection and type, then **upsert** its bound artefact —
+   identity is `(canonical key, section)`, so add one artefact per `(collection, mode)`
+   section, layer-named the key, ensuring the section exists per the contract. Upserts
+   are idempotent and must never duplicate, reorder, or clobber the plugin's artefacts.
+   The binding is the source of truth — no shared hash is required — so the plugin picks
+   up the new variable natively on its next sync and the two writers converge. A
+   designer's edit to a bound variable is captured automatically on the next read.
 4. For code writes: edit the detected source files in their native shape and mode
    convention. Rely on the user's VCS as the safety net; if the working tree is not
    under version control, say so before writing.
@@ -417,8 +467,10 @@ When `--force` is set:
   relinks aliases; it does not delete tokens absent on the winning side unless the
   user also gives an explicit delete instruction.
 - After applying, advance the lockfile as usual. The forced state becomes the new base.
-- In `page` strategy, `--force code` must also reconcile the managed page — repair or
-  regenerate artefacts so the forced state is exactly what future reads will see.
+- In `page` strategy, `--force code` writes the forced values onto the Figma variables
+  and upserts their artefacts on the plugin-maintained page (same `(key, section)`
+  identity as a normal fill-in) so the forced state is what future reads see — without
+  clobbering or reordering the plugin's other artefacts.
 
 `--force` without a value, or with both sides somehow implied, is an error — never
 guess a direction.
@@ -443,12 +495,12 @@ guess a direction.
 ## Setup
 
 `setup` is the interactive first-run configuration. It decides how this project reads
-Figma, binds the file, generates the managed token page if needed, and writes the first
-lockfile.
+Figma, binds the file, discovers/adopts the plugin-maintained token page (`page`
+strategy), and writes the first lockfile.
 
 1. **Trigger.** Runs automatically when a read/write verb finds no lockfile (per
    [Preflight](#preflight)). Also invokable explicitly as `/figma-token-bridge setup` to
-   reconfigure at any time — switch strategy, rebind the file, or regenerate the page.
+   reconfigure at any time — switch strategy, rebind the file, or re-discover the page.
 
 2. **Resolve the Figma file.** Use `--figma <url>` if passed; otherwise ask once (there
    is no lockfile yet to read it from). Extract the `fileKey`.
@@ -469,13 +521,16 @@ lockfile.
 4. **`rest` branch.** Confirm `figmaRead = { "strategy": "rest" }`. No page generation.
    Proceed to the baseline write (step 6).
 
-5. **`page` branch.** Confirm the **Figma MCP server is connected** (writing the page
-   needs it; stop and request it if not). Read the code-side tokens and their modes (see
-   [Code sources](#code-sources-any-codebase)). Offer to **generate the managed token
-   page** from those tokens: a page of variable-bound artefacts, one artefact per token,
-   a section per mode (see [Figma side](#figma-side)), created via `figma-use`. Capture
-   the new page node id and the mode list as
-   `figmaRead = { "strategy": "page", "tokensPageNodeId": "...", "modes": [...] }`.
+5. **`page` branch.** Confirm the **Figma MCP server is connected** (stop and request it
+   if not). **Discover the plugin-maintained token page** named `🎨 Design Tokens` in the
+   bound file (via `get_metadata`), and record its node id. If no such page exists, the
+   Token Sync plugin hasn't run yet — tell the user to run it once to create the page
+   (even an empty one), then re-run `setup`; the skill does **not** generate the page
+   itself. With the page found, read its `"<Collection> / <Mode>"` sections to capture
+   the union of mode names, and set
+   `figmaRead = { "strategy": "page", "tokensPageNodeId": "...", "modes": [...] }`. Any
+   token present in code but absent from the page is filled in later by `apply` (see
+   [apply](#apply)), not during setup.
 
 6. **Write the baseline lockfile (this is `adopt --init`).** With no prior base every
    differing token would look like a conflict, so reconcile once — help the user settle
@@ -501,11 +556,13 @@ up as a tracked deletion recoverable from git history). Then remove, scaled by f
   `figma-token-bridge.plan.json` if present. The `.figma-token-bridge/` snapshots are kept
   as a safety net.
 - **`--purge`** — additionally delete the `.figma-token-bridge/` snapshot directory.
-- **`--with-page`** — additionally delete the managed token page in Figma (`page`
-  strategy only). This needs the MCP server connected; snapshot the page first (per
-  [Safety](#safety-and-reversibility)) and confirm this Figma-side deletion *separately*
-  from the local-state deletion — losing the page is not recoverable from git. Without
-  this flag, `reset` never touches Figma; the page is simply left in place.
+- **`--with-page`** — additionally delete the **plugin-maintained** token page in Figma
+  (`page` strategy only). This needs the MCP server connected; snapshot the page first
+  (per [Safety](#safety-and-reversibility)) and confirm this Figma-side deletion
+  *separately* from the local-state deletion — losing the page is not recoverable from
+  git. Note the page is **shared** with the Token Sync plugin, which will recreate it on
+  its next run, so this rarely makes sense; without the flag, `reset` never touches Figma
+  and the page is left in place.
 
 `reset` only removes figma-token-bridge's own artefacts — it never edits your code tokens
 or (absent `--with-page`) anything in Figma. After a reset there is no lockfile, so the
