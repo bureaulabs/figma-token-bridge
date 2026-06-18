@@ -263,7 +263,7 @@ exposes no variable and is invisible. The artefact is the token *applied* to a n
 a picture of it. Decorative labels/captions are allowed but never read.
 
 - **Page identity & discovery** — exactly one managed page per file, named
-  `🎨 Design Tokens` (discovery relies on the name, because MCP tools see node
+  `🔸 Tokens` (discovery relies on the name, because MCP tools see node
   names/structure, not plugin-private data). The plugin also stamps a shared marker
   (`figma_token_bridge` namespace, `managedPage=1`). `setup` resolves the page once and
   records its node id as `figmaRead.tokensPageNodeId`; later runs target that id and
@@ -522,7 +522,7 @@ strategy), and writes the first lockfile.
    Proceed to the baseline write (step 6).
 
 5. **`page` branch.** Confirm the **Figma MCP server is connected** (stop and request it
-   if not). **Discover the plugin-maintained token page** named `🎨 Design Tokens` in the
+   if not). **Discover the plugin-maintained token page** named `🔸 Tokens` in the
    bound file (via `get_metadata`), and record its node id. If no such page exists, the
    Token Sync plugin hasn't run yet — tell the user to run it once to create the page
    (even an empty one), then re-run `setup`; the skill does **not** generate the page
