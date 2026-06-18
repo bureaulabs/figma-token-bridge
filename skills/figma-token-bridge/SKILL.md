@@ -24,7 +24,13 @@ Invoke with: `/figma-token-bridge <verb> [options]`
 - **Lockfile** — `figma-token-bridge.lock.json`, committed to the repo. The last state both
   sides agreed on. This is the merge base. Its presence is what makes conflict
   detection possible. It also records the project's bound Figma file (`figmaFile`), so
-  the file is remembered across sessions and `--figma` is needed only to override it.
+  the file is remembered across sessions and `--figma` is needed only to override it,
+  and **how this project reads Figma** in a `figmaRead` object. There are two read
+  **strategies**, chosen once by `setup` (see [Setup](#setup)) and remembered here:
+  `rest` (the Figma Variables REST API — Enterprise only) and `page` (a skill-managed
+  page of variable-bound artefacts, read via the MCP server — works on any plan). Every
+  section that touches Figma branches on `figmaRead.strategy`; the full schema is in
+  [Lockfile format](#lockfile-format).
 - **Plan** — `figma-token-bridge.plan.json`, a generated, ordered, human-readable list of
   operations (`create`, `set`, `relink`, `flag`). A plan is inspected and then
   executed as a separate step. Plans are deterministic: the same inputs produce the
@@ -39,15 +45,17 @@ last agreed?" — which is answerable per token.
 | Verb | What it does | Writes |
 |------|--------------|--------|
 | `howto` | Explain how the skill works — the model, the verbs, a typical session, and first-run setup. Pure guidance; reads nothing and writes nothing. | nothing |
+| `setup` | Interactively configure how this project reads Figma (`rest` vs `page`), bind the Figma file, generate the managed token page if needed, and write the initial lockfile. Runs automatically on first run; re-runnable anytime to switch strategy or regenerate the page. | lockfile (+ a Figma page in `page` strategy) |
 | `status` | Show, per token, whether it is unchanged / changed-in-code / changed-in-figma / conflicted / new. Read-only. | nothing |
 | `plan` | Compute the three-way merge and write `figma-token-bridge.plan.json`. Does not touch code or Figma. | plan file |
 | `apply` | Execute an existing plan, then update the lockfile to the new agreed state. | code or Figma, lockfile |
-| `adopt` | Write the current reconciled state to the lockfile without changing either side, recording the bound `figmaFile`. Used to initialize the lock, or to accept the current reality as the new base. | lockfile |
+| `adopt` | Write the current reconciled state to the lockfile without changing either side, recording the bound `figmaFile`. The lower-level baseline primitive that `setup` calls to write the first lock; also used to accept the current reality as a new base. | lockfile |
 
-A normal session is `status` → `plan` → review the plan file → `apply`. There is no
-in-turn "apply? yes/no" prompt: the plan file *is* the review surface, and `apply` is
-a deliberate separate invocation. This makes review inspectable, diffable, and
-attachable to a PR rather than ephemeral chat.
+First run (no lockfile) triggers `setup` automatically. Thereafter a normal session is
+`status` → `plan` → review the plan file → `apply`. There is no in-turn "apply? yes/no"
+prompt: the plan file *is* the review surface, and `apply` is a deliberate separate
+invocation. This makes review inspectable, diffable, and attachable to a PR rather than
+ephemeral chat.
 
 ### howto
 
@@ -60,16 +68,21 @@ Respond with a concise walkthrough, not a dump of this document:
 1. **The model in one line** — a committed lockfile records the last agreed state, and
    each run reconciles code and Figma against it via three-way merge, so one-sided
    changes flow and two-sided changes surface as conflicts instead of being clobbered.
-2. **The verbs** — `status` (read-only diff), `plan` (write the reviewable plan file),
-   `apply` (execute a plan, advance the lock), `adopt` (set the lockfile base).
+2. **The verbs** — `setup` (interactive first-run config: pick the read strategy, bind
+   the file, write the first lock), `status` (read-only diff), `plan` (write the
+   reviewable plan file), `apply` (execute a plan, advance the lock), `adopt` (set the
+   lockfile base).
 3. **A typical session** — `status` → `plan` → open `figma-token-bridge.plan.json` and
    edit it → `apply`.
-4. **First run** — there's no lockfile yet, so run `status`, reconcile once, then
-   `/figma-token-bridge adopt --init` to write the first base. Mention this whenever no
+4. **First run** — there's no lockfile yet, so the first verb auto-launches `setup`. It
+   detects whether your plan supports the Variables REST API and picks a read strategy:
+   `rest` (Enterprise) or `page` (the default for everyone else — a skill-managed token
+   page). Setup writes the first lockfile. Mention this whenever no
    `figma-token-bridge.lock.json` exists.
-5. **What it needs** — a Figma REST token (e.g. `FIGMA_TOKEN`) to read the full
-   variables table, the Figma MCP server connected for writes, a token source in the
-   repo, and edit access to the Figma file for any write.
+5. **What it needs** — depends on the strategy. `rest` needs a Figma REST token
+   (e.g. `FIGMA_TOKEN`) with variables-read scope (Enterprise). `page` needs only the
+   Figma MCP server connected — **no token**. Either way, *writing* to Figma needs the
+   MCP server, plus a token source in the repo and edit access to the Figma file.
 
 Tailor the depth to the question: a bare `howto` gets the whole tour; "how do I
 resolve a conflict?" gets the `--resolve` / `--force` explanation and little else.
@@ -82,11 +95,11 @@ resolve a conflict?" gets the `--resolve` / `--force` explanation and little els
   required on every run. Resolution order for any verb that reads Figma:
   1. `--figma <url>` if passed — wins, and is treated as a deliberate override.
   2. else the lockfile's `figmaFile`, if a lockfile exists.
-  3. else (no lockfile yet, or lockfile has no `figmaFile`) ask once and remember it
-     for the session; the first `adopt`/`apply` writes it into the lockfile.
+  3. else (no lockfile yet) `setup` owns asking for it once and writes it into the first
+     lockfile.
   When `--figma` overrides a different stored `figmaFile`, say so before reading — a
-  changed file binding usually means a re-`adopt`, not a normal sync. Passing `--figma`
-  that matches the stored value is a harmless no-op.
+  changed file binding usually means a re-`adopt` (or re-`setup`), not a normal sync.
+  Passing `--figma` that matches the stored value is a harmless no-op.
 - `--only <glob>` — restrict to matching token keys (e.g. `--only "color.*"`).
   Repeatable. Applies to every verb.
 - `--resolve code|figma` — for `apply`, how to settle conflicts that the plan marked
@@ -99,7 +112,10 @@ resolve a conflict?" gets the `--resolve` / `--force` explanation and little els
   so it is a blunt instrument, distinct from `--resolve`. It must be passed explicitly,
   is never implied, and `plan`/`status` always show the per-token routing `--force`
   would override. Scope it with `--only` to limit the blast radius. See "Forced apply".
-- `--init` — for `adopt`, allowed only when no lockfile exists yet.
+- `--init` — for `adopt`, allowed only when no lockfile exists yet. `setup` performs the
+  same baseline write interactively; `adopt --init` is the explicit, non-interactive
+  primitive. Re-run `setup` with no flags anytime to switch strategy or regenerate the
+  managed token page.
 
 ## Preflight
 
@@ -108,40 +124,53 @@ actually available, and **stop with a specific, actionable message** if it isn't
 Never proceed into a read or write that will silently come up empty or fail
 mid-operation. `howto` needs nothing and skips preflight entirely.
 
-Two distinct capabilities, checked only when the verb needs them:
+**No lockfile → run `setup`, don't error.** If a read/write verb (`status`/`plan`/
+`apply`) is invoked and there is no `figma-token-bridge.lock.json`, the project hasn't been
+configured yet. Launch the interactive [Setup](#setup) flow instead of erroring — setup
+decides the read strategy, binds the file, and writes the first lockfile. Everything
+below applies once a lockfile exists.
 
-- **Read (any verb that reads Figma — `status`, `plan`, `apply`)** needs a Figma REST
-  token. Check for it in the environment (`FIGMA_TOKEN`, or `FIGMA_ACCESS_TOKEN` /
-  `FIGMA_PERSONAL_ACCESS_TOKEN`). If none is set, stop and request it:
+What a read needs depends on the lockfile's `figmaRead.strategy`; a Figma *write* is the
+same in either strategy.
 
-  > **Figma token required.** This skill reads the full variables table via the Figma
-  > REST API, which needs a personal access token with **variables read** scope. Set it
-  > persistently so it survives shell reloads (zsh — use `~/.zshenv`, which every shell
-  > sources, not `~/.zshrc`, which only interactive ones do):
+- **Read in `rest` strategy** needs a Figma REST token. Check the environment
+  (`FIGMA_TOKEN`, or `FIGMA_ACCESS_TOKEN` / `FIGMA_PERSONAL_ACCESS_TOKEN`). If none is
+  set, stop and request it:
+
+  > **Figma token required (rest strategy).** This project reads the full variables
+  > table via the Figma Variables REST API, which needs a personal access token with
+  > **variables read** scope. Set it persistently so it survives shell reloads (zsh —
+  > use `~/.zshenv`, which every shell sources, not `~/.zshrc`, which only interactive
+  > ones do):
   > ```bash
   > echo 'export FIGMA_TOKEN="figd_your_token_here"' >> ~/.zshenv
   > source ~/.zshenv   # load it into the current shell
   > ```
   > For bash, use `~/.bashrc` (or `~/.profile` for login shells). See the README's
   > "Setting `FIGMA_TOKEN`" section for token creation and verification.
-  >
-  > Note: the Variables REST API is a Figma **Enterprise-plan** feature. If a token is
-  > set but the read returns 401/403, say whether it's an auth failure (bad/expired
-  > token or missing scope) or a plan limitation (not on Enterprise), and stop.
 
-- **Write (`apply` writing to Figma)** needs the **Figma MCP server** connected. If it
-  isn't, stop before reading anything and request it:
+  Validate the token by probing the read (see [Figma side](#figma-side)). If the probe
+  returns **401**, it's an auth failure (bad/expired token or missing scope) — say so
+  and stop. If it returns **403**, the file lost Enterprise access; tell the user and
+  suggest `/figma-token-bridge setup` to switch to the `page` strategy.
 
-  > **Figma MCP server not configured.** Writing to Figma needs the Figma MCP server
-  > connected in your agent. Connect it (and confirm `figma-use` is available), then
-  > re-run. A read-only `status`/`plan` does not need the MCP server — only the REST
-  > token above.
+- **Read in `page` strategy** needs the **Figma MCP server** connected (it reads the
+  managed token page via the server, not the REST API) — **no token required**. If the
+  server isn't connected, stop with the MCP message below.
 
-Run the check that matches the verb, validate before doing real work (a token that is
-present but rejected, or an MCP server that is configured but unreachable, must be
-reported as such — presence is not the same as working), and distinguish the two
-failures plainly so the user knows whether to fix a token, a plan, or an MCP
-connection. Surface the request once; do not loop.
+- **Write (`apply` writing to Figma, either strategy)** needs the **Figma MCP server**
+  connected. If it isn't:
+
+  > **Figma MCP server not configured.** This needs the Figma MCP server connected in
+  > your agent. Connect it (and confirm `figma-use` is available), then re-run. A
+  > read-only `status`/`plan` in `rest` strategy does not need the MCP server — only the
+  > REST token above; `page` strategy needs the server for reads too.
+
+Run the check that matches the verb and strategy, validate before doing real work (a
+token that is present but rejected, or an MCP server that is configured but unreachable,
+must be reported as such — presence is not the same as working), and distinguish the
+failures plainly so the user knows whether to fix a token, a plan, an MCP connection, or
+run setup. Surface the request once; do not loop.
 
 ## Reading and normalization
 
@@ -159,6 +188,10 @@ meaning don't register as drift, and a value change registers even if the format
 looks similar (e.g. `#000` vs `#000000` normalize to the same hash; `#000` vs `#010101`
 do not).
 
+The Figma snapshot is produced by whichever read strategy the lockfile records
+(`figmaRead.strategy`); both strategies produce the same canonical rows, so everything
+downstream — the merge, the plan, `apply` — is strategy-agnostic.
+
 ### Code sources (any codebase)
 
 Detect, in priority order, and state which was used:
@@ -172,42 +205,78 @@ Modes come from whichever convention the source uses — nested `{ light, dark }
 key suffixes (`.dark`), or sibling theme files (`light.json` / `dark.json`). Record
 the detected mode convention in the plan so `apply` writes back in the same shape.
 
+These detected code tokens (and their modes) are also the source `setup` uses to
+**generate the managed token page** in `page` strategy — one artefact per token, a
+section per mode (see [Figma side](#figma-side)).
+
 ### Figma side
 
-The Figma snapshot must cover **every local variable**, including ones not applied to
-any frame or layer. That requires a full read of the variables table, which is the
-**canonical read path**:
+How the Figma snapshot is read depends on `figmaRead.strategy` in the lockfile. Both
+strategies normalize into the same canonical rows; they differ only in coverage and
+fidelity. `setup` picks the strategy once (see [Setup](#setup)).
 
-1. **REST Variables API (canonical).** `GET /v1/files/:fileKey/variables/local` with a
-   Figma personal/CI token. This enumerates all local variable collections, their
-   modes, per-mode values, and alias (`VARIABLE_ALIAS`) targets, **independent of
-   whether any node uses them** — so a newly added or unused variable is included. This
-   is the read the snapshot is built from. It needs a token in the environment
-   (e.g. `FIGMA_TOKEN`) and is a Figma enterprise-plan endpoint; if the token is
-   missing, say so and stop rather than silently falling back.
+#### Strategy `rest` (Enterprise)
 
-2. **MCP `get_variable_defs` (selection-only fallback).** This resolves only the
-   variables **bound to a given node / the current selection**, and returns them as a
-   flattened name→value map — it does **not** enumerate the table, and unused variables
-   never appear. Use it only for a quick, explicitly scoped spot-check of a selection,
-   never as the source for a full `status`/`plan`/`apply`. State plainly when a read
-   came from this path that coverage is limited to the selection.
+The highest-fidelity read. `GET /v1/files/:fileKey/variables/local` with a Figma
+token enumerates **every local variable** — all collections, modes, per-mode values,
+and alias (`VARIABLE_ALIAS`) targets — **independent of whether any node uses them**, so
+a newly added or unused variable is included. This is the full variables table. It needs
+a token in the environment (e.g. `FIGMA_TOKEN`) and is a Figma **Enterprise-plan**
+endpoint. On `401` say it's an auth failure and stop; on `403` say the file isn't on
+Enterprise (or the token lacks scope) and suggest `setup` to switch to `page`.
 
-**Load `figma-use` only before a write**, never for reads.
+#### Strategy `page` (any plan, the default)
+
+For non-Enterprise projects the snapshot is read from a **skill-managed page of
+variable-bound artefacts** — the page whose node id is `figmaRead.tokensPageNodeId`.
+Each token is *applied* to a node, and because `get_variable_defs` resolves the
+variables bound to a node, applying every token to an artefact makes the whole set
+readable through the MCP server without the REST API.
+
+- **Artefact mapping** — `color` → a swatch (rectangle) with the variable bound to its
+  fill; `number` → a frame whose bound dimension (width/height/spacing) uses the
+  variable; `string`/type → a text node with the variable bound to its content or text
+  style; `boolean` → a labeled toggle artefact (a node named for the token whose
+  visible on/off state is driven by the variable). Each artefact's layer name is the
+  token's canonical `key`.
+- **Multi-mode** — every mode is represented as its own section (a frame per mode, named
+  for the mode) so all per-mode values are present on one page at once; the mode names
+  are recorded in `figmaRead.modes`.
+- **How to read** — `get_metadata` on `tokensPageNodeId` to enumerate the per-mode
+  sections and their artefact nodes, then `get_variable_defs` scoped to those nodes to
+  resolve each bound variable's name→value per mode. Normalize into the same canonical
+  rows (`key`, `type`, `modes`, `ref`, `hash`).
+- **Honest caveats** — coverage is exactly "what's on the managed page": a variable with
+  no artefact is invisible to this read (this is why the deletion guard below treats such
+  absences as *unknown*, never deletions). Alias/`ref` fidelity is limited — node reads
+  resolve values rather than exposing `VARIABLE_ALIAS` targets, so `ref` may be captured
+  as a resolved value; flag relinks conservatively rather than guessing. Completeness is
+  defined relative to the page the skill itself generates and maintains.
+
+A bare `get_variable_defs` on an arbitrary selection remains available as an ad-hoc
+spot-check, but it is not a strategy — it only sees the current selection.
+
+**Load `figma-use` only before a write**, never for ordinary reads — with one
+exception: `page` strategy's `setup`/`apply` use `figma-use` to *create and maintain*
+the managed page, which is itself a write.
 
 #### Never read a partial table as deletion
 
-A token present in the lockfile but absent from the Figma read is only a real
-deletion if the read was **complete**. Because a scoped or failed read can omit
-variables that still exist, guard against false `flag`s:
+A token present in the lockfile but absent from the Figma read is only a real deletion
+if the read was **complete**. Because a scoped or failed read can omit variables that
+still exist, guard against false `flag`s — and "complete" means something different per
+strategy:
 
-- Only classify absent-in-figma tokens as `deleted in figma` when the snapshot came
-  from the canonical REST read **and** that read succeeded and returned a non-empty
-  table. Otherwise treat absences as *unknown*, not deleted.
-- If the REST read fails, returns empty, or only a selection-scoped fallback was
-  available, **abort the run** (or, for `status`, report "Figma read incomplete —
-  coverage limited") rather than emitting deletions. A bad read must never advance the
-  lockfile or produce delete/`flag` ops.
+- **`rest`** — only classify absent-in-figma tokens as `deleted in figma` when the
+  snapshot came from a REST read that **succeeded and returned a non-empty table**.
+- **`page`** — a token absent from the read is **not** a deletion just because it lacks
+  an artefact; absences are *unknown*. A genuine page-mode deletion is only an artefact
+  the skill previously maintained that is now gone from the page. When in doubt, treat
+  page-coverage gaps as unknown and never auto-delete.
+- In either strategy, if the read fails, returns empty, or coverage is uncertain,
+  **abort the run** (or, for `status`, report "Figma read incomplete — coverage
+  limited") rather than emitting deletions. A bad read must never advance the lockfile
+  or produce delete/`flag` ops.
 
 ## Three-way merge (the core algorithm)
 
@@ -231,6 +300,11 @@ global "push/pull" mode. A run can therefore carry some code→figma and some
 figma→code operations at once — each token flows from wherever it changed. Conflicts
 and deletions never resolve automatically.
 
+The table is strategy-agnostic, with one caveat: in `page` strategy the `deleted in
+figma` row fires only when an artefact the skill maintained was genuinely removed from
+the managed page, never when a variable merely lacks an artefact (see the deletion
+guard above).
+
 ## Plan file format
 
 `plan` writes `figma-token-bridge.plan.json`:
@@ -239,6 +313,7 @@ and deletions never resolve automatically.
 {
   "figmaTokenBridgeVersion": 1,
   "figmaFile": "<url>",
+  "strategy": "page",
   "base": "figma-token-bridge.lock.json@<lockHash>",
   "modeConvention": "nested",
   "ops": [
@@ -254,7 +329,41 @@ and deletions never resolve automatically.
 ```
 
 The plan is meant to be opened and read. A reviewer can delete ops they don't want;
-`apply` executes exactly the ops present in the file.
+`apply` executes exactly the ops present in the file. The `strategy` field records which
+read strategy produced the plan, so `apply` knows whether it must also maintain the
+managed token page (`page`) or only write variables (`rest`).
+
+## Lockfile format
+
+`figma-token-bridge.lock.json` is committed and holds the agreed base plus the project's
+Figma binding and read strategy:
+
+```json
+{
+  "figmaTokenBridgeVersion": 1,
+  "figmaFile": "https://figma.com/design/<fileKey>/<name>",
+  "figmaRead": {
+    "strategy": "page",
+    "tokensPageNodeId": "123:456",
+    "modes": ["light", "dark"]
+  },
+  "tokens": {
+    "color.bg.primary": {
+      "type": "color",
+      "modes": { "light": "#FFFFFF", "dark": "#0B0B0F" },
+      "ref": null,
+      "hash": "<contentHash>"
+    }
+  }
+}
+```
+
+- `figmaRead.strategy` — `"rest"` or `"page"`. For `"rest"`, `tokensPageNodeId` and
+  `modes` are omitted (the REST read needs neither). For `"page"`, both are present:
+  `tokensPageNodeId` is the managed page, `modes` the mode sections represented on it.
+- `tokens` — the agreed base, one canonical row per token (the same shape produced by
+  reading; see [Reading and normalization](#reading-and-normalization)). This is the
+  merge base the three-way compare uses.
 
 ## apply
 
@@ -265,14 +374,21 @@ The plan is meant to be opened and read. A reviewer can delete ops they don't wa
 3. For Figma writes: load `figma-use`, then apply ops sequentially in this order —
    ensure collections/modes, `create` primitives, `create`/`relink` aliases, `set`
    values. Never parallelize writes. Never delete unless an op explicitly says so
-   *and* the user passed an explicit delete resolution.
+   *and* the user passed an explicit delete resolution. In `page` strategy this same
+   step must **also maintain the managed token page** so future reads stay complete: a
+   newly created token gets a new artefact in every mode section; a changed value
+   updates the artefact (and adds a mode section if a new mode appeared). The variables
+   are still the source of truth — the page is their readable surface — so a designer's
+   edit to a bound variable is captured automatically on the next read, no special
+   handling needed.
 4. For code writes: edit the detected source files in their native shape and mode
    convention. Rely on the user's VCS as the safety net; if the working tree is not
    under version control, say so before writing.
 5. On success, rewrite `figma-token-bridge.lock.json` to the new agreed state and report the
-   new lock hash. Persist `figmaFile` (the resolved file used for this run) into the
-   lockfile so the binding sticks. The lock now reflects reality; the next `status` is
-   clean and needs no `--figma`.
+   new lock hash. Persist `figmaFile` and `figmaRead` (the resolved file and strategy
+   used for this run — refresh `figmaRead.modes` if a new mode was added) so the binding
+   sticks. The lock now reflects reality; the next `status` is clean and needs no
+   `--figma`.
 
 ### Forced apply (`--force`)
 
@@ -294,6 +410,8 @@ When `--force` is set:
   relinks aliases; it does not delete tokens absent on the winning side unless the
   user also gives an explicit delete instruction.
 - After applying, advance the lockfile as usual. The forced state becomes the new base.
+- In `page` strategy, `--force code` must also reconcile the managed page — repair or
+  regenerate artefacts so the forced state is exactly what future reads will see.
 
 `--force` without a value, or with both sides somehow implied, is an error — never
 guess a direction.
@@ -304,19 +422,60 @@ guess a direction.
   exactly what each sync agreed to.
 - Before writing to Figma, save a snapshot of current Figma state to
   `.figma-token-bridge/figma-<fileKey>-<timestamp>.json` so a bad apply can be reconstructed.
+  In `page` strategy this snapshot also captures the managed page state (artefact node
+  ids and values) so a bad page mutation is recoverable, not just the variables.
 - A `--force` apply additionally snapshots the side being overwritten before writing,
   so an override is recoverable from disk in addition to VCS.
 - Deletions and conflicts are never resolved without an explicit instruction.
-- Capability gating is handled up front by **Preflight**: a read needs a `FIGMA_TOKEN`,
-  a Figma write needs the MCP server connected. Each is requested only when the verb
-  needs it (a read-only `status`/`plan` never requires the MCP server), and a missing
-  capability stops the run with a specific message rather than failing mid-operation.
+- Capability gating is handled up front by **Preflight**, strategy-aware: a `rest` read
+  needs a `FIGMA_TOKEN`; a `page` read needs the MCP server; any Figma write needs the
+  MCP server; and a verb run with no lockfile launches `setup` instead of erroring. A
+  missing capability stops the run with a specific message rather than failing
+  mid-operation.
 
-## Initialization
+## Setup
 
-First run, with no lockfile: there is no merge base, so every differing token would
-look like a conflict. The first run also has no stored `figmaFile`, so pass `--figma`
-once on this run. Run `status` to show the divergence, help the user reconcile once
-(or pick a side for the initial state), then `/figma-token-bridge adopt --init` to write
-the first lockfile — which records the `figmaFile` binding. Subsequent runs use real
-three-way merge and reuse the stored file, so `--figma` is only needed to override.
+`setup` is the interactive first-run configuration. It decides how this project reads
+Figma, binds the file, generates the managed token page if needed, and writes the first
+lockfile.
+
+1. **Trigger.** Runs automatically when a read/write verb finds no lockfile (per
+   [Preflight](#preflight)). Also invokable explicitly as `/figma-token-bridge setup` to
+   reconfigure at any time — switch strategy, rebind the file, or regenerate the page.
+
+2. **Resolve the Figma file.** Use `--figma <url>` if passed; otherwise ask once (there
+   is no lockfile yet to read it from). Extract the `fileKey`.
+
+3. **Detect read capability — by probe, not introspection.** A Figma token's scopes
+   cannot be read from the token itself, so detection means *attempting* the REST read
+   and branching on the result:
+   - **No token in the environment** → choose **`page`**.
+   - **Token present** → probe `GET /v1/files/:fileKey/variables/local`:
+     - **200** → REST works → choose **`rest`**.
+     - **403** → the token is valid but lacks `file_variables:read` scope, or the file
+       isn't on an Enterprise org → choose **`page`** and tell the user why (offer
+       `rest` later if they get Enterprise / add scope).
+     - **401** → bad or expired token → report it; offer to fix the token and re-probe,
+       or proceed with **`page`**.
+     - anything else / empty → treat as `page`-eligible and report the ambiguity.
+
+4. **`rest` branch.** Confirm `figmaRead = { "strategy": "rest" }`. No page generation.
+   Proceed to the baseline write (step 6).
+
+5. **`page` branch.** Confirm the **Figma MCP server is connected** (writing the page
+   needs it; stop and request it if not). Read the code-side tokens and their modes (see
+   [Code sources](#code-sources-any-codebase)). Offer to **generate the managed token
+   page** from those tokens: a page of variable-bound artefacts, one artefact per token,
+   a section per mode (see [Figma side](#figma-side)), created via `figma-use`. Capture
+   the new page node id and the mode list as
+   `figmaRead = { "strategy": "page", "tokensPageNodeId": "...", "modes": [...] }`.
+
+6. **Write the baseline lockfile (this is `adopt --init`).** With no prior base every
+   differing token would look like a conflict, so reconcile once — help the user settle
+   divergence, or pick a side for the initial state — then write
+   `figma-token-bridge.lock.json` with `figmaFile`, `figmaRead`, and the agreed `tokens`
+   base. Subsequent runs use real three-way merge and reuse the stored file and strategy.
+
+`setup` is the guided wrapper; the baseline write it performs is exactly `adopt --init`,
+which remains available as the explicit, non-interactive primitive for users who already
+know their strategy or are scripting.
