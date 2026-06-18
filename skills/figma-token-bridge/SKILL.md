@@ -50,6 +50,7 @@ last agreed?" — which is answerable per token.
 | `plan` | Compute the three-way merge and write `figma-token-bridge.plan.json`. Does not touch code or Figma. | plan file |
 | `apply` | Execute an existing plan, then update the lockfile to the new agreed state. | code or Figma, lockfile |
 | `adopt` | Write the current reconciled state to the lockfile without changing either side, recording the bound `figmaFile`. The lower-level baseline primitive that `setup` calls to write the first lock; also used to accept the current reality as a new base. | lockfile |
+| `reset` | Clear this project's figma-token-bridge state (lockfile, plan, and optionally snapshots / the managed Figma page) so the next run starts from scratch with a fresh `setup`. Confirms before deleting. | deletes local state (+ Figma page with `--with-page`) |
 
 First run (no lockfile) triggers `setup` automatically. Thereafter a normal session is
 `status` → `plan` → review the plan file → `apply`. There is no in-turn "apply? yes/no"
@@ -71,7 +72,7 @@ Respond with a concise walkthrough, not a dump of this document:
 2. **The verbs** — `setup` (interactive first-run config: pick the read strategy, bind
    the file, write the first lock), `status` (read-only diff), `plan` (write the
    reviewable plan file), `apply` (execute a plan, advance the lock), `adopt` (set the
-   lockfile base).
+   lockfile base), `reset` (clear state and start over).
 3. **A typical session** — `status` → `plan` → open `figma-token-bridge.plan.json` and
    edit it → `apply`.
 4. **First run** — there's no lockfile yet, so the first verb auto-launches `setup`. It
@@ -116,6 +117,12 @@ resolve a conflict?" gets the `--resolve` / `--force` explanation and little els
   same baseline write interactively; `adopt --init` is the explicit, non-interactive
   primitive. Re-run `setup` with no flags anytime to switch strategy or regenerate the
   managed token page.
+- `--purge` — for `reset`, also delete the `.figma-token-bridge/` snapshot directory
+  (pre-write backups). Off by default so reset keeps the backups as a safety net.
+- `--with-page` — for `reset` in `page` strategy, also delete the managed token page in
+  Figma. Destructive and needs the MCP server; the page is snapshotted first and the
+  deletion is confirmed separately.
+- `--yes` — for `reset`, skip the confirmation prompt (for scripting). Never assumed.
 
 ## Preflight
 
@@ -479,3 +486,27 @@ lockfile.
 `setup` is the guided wrapper; the baseline write it performs is exactly `adopt --init`,
 which remains available as the explicit, non-interactive primitive for users who already
 know their strategy or are scripting.
+
+## Reset
+
+`reset` clears this project's figma-token-bridge state so it can start over from a clean
+`setup`. Use it to abandon a bad baseline, switch to a fresh Figma file, or wipe a setup
+that picked the wrong strategy.
+
+It is destructive, so **always confirm before deleting** unless `--yes` is passed: list
+exactly what will be removed (and warn that the lockfile is committed, so removal shows
+up as a tracked deletion recoverable from git history). Then remove, scaled by flags:
+
+- **Default** — delete `figma-token-bridge.lock.json` (the binding, strategy, and base) and
+  `figma-token-bridge.plan.json` if present. The `.figma-token-bridge/` snapshots are kept
+  as a safety net.
+- **`--purge`** — additionally delete the `.figma-token-bridge/` snapshot directory.
+- **`--with-page`** — additionally delete the managed token page in Figma (`page`
+  strategy only). This needs the MCP server connected; snapshot the page first (per
+  [Safety](#safety-and-reversibility)) and confirm this Figma-side deletion *separately*
+  from the local-state deletion — losing the page is not recoverable from git. Without
+  this flag, `reset` never touches Figma; the page is simply left in place.
+
+`reset` only removes figma-token-bridge's own artefacts — it never edits your code tokens
+or (absent `--with-page`) anything in Figma. After a reset there is no lockfile, so the
+next verb auto-launches `setup` exactly as on a true first run.

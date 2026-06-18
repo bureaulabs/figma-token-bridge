@@ -45,11 +45,14 @@ New here? Run `/figma-token-bridge howto` for a guided tour of the model and ver
 | `plan` | Compute the three-way merge, write the plan file. No writes to code or Figma. |
 | `apply` | Execute a plan, then advance the lockfile. |
 | `adopt` | Record current state as the lockfile base — the low-level baseline primitive `setup` calls (`--init` on first run). |
+| `reset` | Clear this project's state (lockfile, plan, optionally snapshots / the Figma token page) and start over with a fresh `setup`. Confirms first. |
 
 Options: `--figma <url>` (stored in the lockfile after the first run; only needed
 again to override the bound file), `--only <glob>` (repeatable), `--resolve code|figma`
 (for conflicts at apply time), `--force code|figma` (deliberate whole-side override
-at apply time — overwrites the other side's changes too), `--init` (first-run adopt).
+at apply time — overwrites the other side's changes too), `--init` (first-run adopt),
+and for `reset`: `--purge` (also delete local snapshots), `--with-page` (also delete the
+managed Figma token page), `--yes` (skip the confirmation prompt).
 
 ## First-run setup
 
